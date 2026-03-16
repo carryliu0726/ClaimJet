@@ -168,7 +168,11 @@ class FlightVerifier:
                 return {
                     "success": False,
                     "error": f"No flight data found for {flight_number}"
-                    + (f" on {flight_date}" if flight_date else ""),
+                    + (f" on {flight_date}" if flight_date else "")
+                    + ".\n\n💡 This could mean:\n"
+                    + "• Flight number doesn't exist or is incorrect\n"
+                    + "• Flight is not in the recent flights database (free tier: last 24-48h)\n"
+                    + "• Try checking without a date, or use manual entry mode",
                     "error_type": "not_found",
                 }
 

@@ -33,11 +33,22 @@ class SimpleClaimChatbot:
         return None
 
     def extract_date(self, text):
-        """Extract date from text (YYYY-MM-DD format)"""
+        """Extract date from text (YYYY-MM-DD format or variations)"""
         # Match YYYY-MM-DD format
         match = re.search(r"\b(\d{4})-(\d{2})-(\d{2})\b", text)
         if match:
             return match.group(0)
+
+        # Match YYYY/MM/DD format
+        match = re.search(r"\b(\d{4})/(\d{2})/(\d{2})\b", text)
+        if match:
+            return match.group(0).replace("/", "-")
+
+        # Match "on YYYY-MM-DD" or "date YYYY-MM-DD"
+        match = re.search(r"(?:on|date)\s+(\d{4})-(\d{2})-(\d{2})", text.lower())
+        if match:
+            return f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
+
         return None
 
     def process_message(self, message, state):
@@ -47,15 +58,34 @@ class SimpleClaimChatbot:
         # Mark as greeted
         state["greeted"] = True
 
-        # Check for flight number verification request
+        # PRIORITY 1: Check for flight number first (before extracting delays)
+        # This prevents misinterpreting flight numbers as delay hours
         flight_number = self.extract_flight_number(message)
         if flight_number:
-            # Check if user wants to verify a specific flight
-            if any(
-                word in message_lower
-                for word in ["check", "verify", "lookup", "flight"]
-            ):
-                flight_date = self.extract_date(message)
+            flight_date = self.extract_date(message)
+
+            # Check if this is likely a flight verification request
+            # Keywords: check, verify, lookup, flight, delayed, cancelled, denied
+            # OR if date is present (strong indicator of flight verification)
+            is_verification_request = (
+                any(
+                    word in message_lower
+                    for word in [
+                        "check",
+                        "verify",
+                        "lookup",
+                        "flight",
+                        "delayed",
+                        "cancelled",
+                        "denied",
+                        "was",
+                    ]
+                )
+                or flight_date is not None
+            )
+
+            if is_verification_request:
+                # Call API to verify the flight
                 return self.verify_flight_info(flight_number, flight_date)
 
         # Extract delay information
