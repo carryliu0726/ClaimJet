@@ -121,7 +121,7 @@ class EU261Rules:
         if denied_boarding:
             return (
                 True,
-                "Compensation due to denied boarding (overbooking)",
+                "Denied boarding (overbooking)",
                 compensation,
             )
 
@@ -134,14 +134,14 @@ class EU261Rules:
                     # Between 7-14 days: depends on alternative flight timing
                     return (
                         True,
-                        f"Compensation due to cancellation with {advance_notice_days} days notice",
+                        f"Cancelled with {advance_notice_days} days notice",
                         compensation,
                     )
                 else:
                     # Less than 7 days notice
                     return (
                         True,
-                        "Compensation due to cancellation with insufficient notice",
+                        "Cancelled with insufficient notice",
                         compensation,
                     )
             else:
@@ -161,15 +161,15 @@ class EU261Rules:
                 compensation = 300
                 return (
                     True,
-                    f"Compensation due to {delay_hours:.1f}h delay (reduced for non-EU long-haul)",
+                    f"{delay_hours:.1f}h delay (reduced for non-EU)",
                     compensation,
                 )
 
-            return True, f"Compensation due to {delay_hours:.1f}h delay", compensation
+            return True, f"{delay_hours:.1f}h delay", compensation
         else:
             return (
                 False,
-                f"Delay of {delay_hours:.1f}h is below the {threshold}h threshold for {distance_category} flights",
+                f"Delay {delay_hours:.1f}h below {threshold}h threshold",
                 0,
             )
 
