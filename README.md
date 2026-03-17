@@ -1,296 +1,698 @@
-# KLM Flight Delay Compensation Agent
+# ✈️ ClaimJet - EU261 Flight Compensation Assistant
 
-An AI-powered agent built with Google Vertex AI that helps KLM passengers determine their eligibility for compensation under EU Regulation 261/2004 (EU261).
+An intelligent chatbot powered by **Google Gemini 2.5 Flash** to help passengers check flight compensation eligibility under EU261 regulations.
 
-## Features
+---
 
-- **EU261 Compliance**: Implements complete EU261/2004 regulation rules
-- **Intelligent Conversation**: Powered by Gemini 1.5 Pro for natural interactions
-- **Compensation Calculator**: Automatically calculates compensation amounts based on:
-  - Flight distance (€250 - €600)
-  - Delay duration (3-4 hour thresholds)
-  - Flight type (cancellation, delay, denied boarding)
-  - Extraordinary circumstances
-- **Care & Assistance Rights**: Informs passengers of their rights to meals, accommodation, etc.
-- **Multi-passenger Support**: Calculate total compensation for multiple passengers
+## 🏗️ Architecture Overview
 
-## Project Structure
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         User Interface                          │
+│                    Gradio Web Chat (Port 7860)                  │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+┌──────────────────────────────▼──────────────────────────────────┐
+│                      Session Management                          │
+│              (Gradio State + Memory Bank Sessions)              │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+┌──────────────────────────────▼──────────────────────────────────┐
+│                         Memory Bank                              │
+│           Google Cloud Firestore (Conversation Storage)          │
+│  • Session-based persistence  • Context retrieval (10 msgs)     │
+│  • Automatic cleanup          • Graceful degradation            │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+┌──────────────────────────────▼──────────────────────────────────┐
+│                    ADK Agent (adk_agent.py)                      │
+│              Google Agent Development Kit (ADK)                  │
+│  • System Instructions        • Function Calling                │
+│  • Tool Selection             • Context Enhancement             │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+                ┌──────────────┼──────────────┐
+                │              │              │
+┌───────────────▼────┐  ┌──────▼──────┐  ┌───▼────────────────┐
+│  Flight Verifier   │  │  EU261 Rules │  │  EU261 Info Guide  │
+│   (Tool #1)        │  │   (Tool #2)  │  │     (Tool #3)      │
+│                    │  │              │  │                    │
+│ • Real flight data │  │ • Calculate  │  │ • Regulations      │
+│ • API integration  │  │   amounts    │  │ • Thresholds       │
+│ • Mock test data   │  │ • Eligibility│  │ • Rights info      │
+└────────────────────┘  └──────────────┘  └────────────────────┘
+                               │
+┌──────────────────────────────▼──────────────────────────────────┐
+│                      Gemini 2.5 Flash                            │
+│               (Google GenAI API / Vertex AI)                     │
+│  • Temperature: 0.3         • Function calling enabled          │
+│  • System instructions      • Streaming responses               │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+┌──────────────────────────────▼──────────────────────────────────┐
+│                        Model Armor                               │
+│              (Content Safety & Input Validation)                 │
+│  • Template-based filtering  • Prompt injection protection      │
+│  • PII detection             • Content moderation                │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🧩 Core Components
+
+### 1. **Google ADK (Agent Development Kit)**
+The foundation of ClaimJet's intelligence.
+
+**Location:** `adk_agent.py`
+
+**What it does:**
+- Orchestrates agent behavior with system instructions
+- Enables **function calling** to automatically select and use tools
+- Manages context and conversation flow
+- Integrates with Gemini 2.5 Flash for natural language understanding
+
+**Key Features:**
+```python
+class FlightCompensationAgent:
+    - tools = [verify_flight_data, calculate_compensation, get_eu261_info]
+    - system_instruction = "You are a flight compensation assistant..."
+    - chat(user_message, history, session_id) → response
+```
+
+**ADK Benefits:**
+- ✅ Automatic tool selection based on user intent
+- ✅ Structured function calling (no prompt engineering needed)
+- ✅ Built-in error handling and retries
+- ✅ Seamless integration with Google AI APIs
+
+**Documentation:** [Google ADK Overview](https://ai.google.dev/adk)
+
+---
+
+### 2. **Memory Bank (Conversation Persistence)**
+Enables context-aware conversations across messages.
+
+**Location:** `memory_bank.py`
+
+**What it does:**
+- Stores conversation history in **Google Cloud Firestore**
+- Retrieves recent context (last 10 messages by default)
+- Enhances prompts with conversation history
+- Manages sessions with unique UUIDs
+
+**Architecture:**
+```
+User Message → Memory Bank.get_history(session_id)
+             ↓
+      Build context summary
+             ↓
+      Enhanced prompt = context + current message
+             ↓
+      Send to Gemini → Get response
+             ↓
+      Memory Bank.add_message(user + assistant)
+```
+
+**Key Features:**
+```python
+class MemoryBank:
+    - create_session(user_id) → session_id
+    - add_message(session_id, role, content)
+    - get_history(session_id, limit=10) → messages[]
+    - get_context_summary(session_id) → formatted_context
+    - clear_session(session_id)
+    - cleanup_old_sessions(days=7)
+```
+
+**Firestore Structure:**
+```
+conversations/
+  └── {session_id}/
+      ├── session_id: UUID
+      ├── user_id: string
+      ├── created_at: timestamp
+      ├── last_activity: timestamp
+      ├── messages: [
+      │     {role, content, timestamp, metadata},
+      │     ...
+      │   ]
+      └── metadata: {}
+```
+
+**Benefits:**
+- ✅ Conversations persist across page refreshes
+- ✅ Context-aware responses (remembers previous messages)
+- ✅ Scalable (Firestore handles millions of sessions)
+- ✅ Cost-effective (~$0.08 per 10K conversations)
+- ✅ Graceful fallback if unavailable
+
+**All setup instructions included in this README.**
+
+---
+
+### 3. **Model Armor (Content Safety)**
+Protects against malicious inputs and unsafe content.
+
+**Status:** Configured via Google Cloud Console
+
+**What it does:**
+- **Input validation** - Filters prompt injections, jailbreaks
+- **PII detection** - Identifies and redacts sensitive data
+- **Content moderation** - Blocks harmful/inappropriate content
+- **Output filtering** - Ensures safe responses
+
+**Protection Layers:**
+```
+User Input → Model Armor Template
+           ↓
+    Validate & Filter
+           ↓
+    Clean Input → Gemini
+           ↓
+    Response → Model Armor
+           ↓
+    Validate & Filter
+           ↓
+    Safe Output → User
+```
+
+**Configuration:**
+- Template created via Google Cloud Console
+- Template ID stored in `.env` file
+- Applied to all Gemini API calls
+
+**Setup instructions via Google Cloud Console (see below).**
+
+---
+
+### 4. **Agent Tools (Function Calling)**
+Three specialized tools for flight compensation checks.
+
+#### Tool #1: `verify_flight_data(flight_number, flight_date)`
+**Purpose:** Verify flight information using real-time or mock data
+
+**What it does:**
+```python
+Input:  flight_number="TEST001", flight_date="2026-03-17"
+Output: Formatted decision with:
+        - Flight details (route, delay, distance)
+        - EU261 eligibility status
+        - Compensation amount (if eligible)
+        - Next steps for filing claims
+```
+
+**Location:** `flight_verifier.py`
+
+**Features:**
+- Real flight API integration (when configured)
+- Mock test flights (TEST001, TEST002)
+- Automatic EU261 eligibility calculation
+
+---
+
+#### Tool #2: `calculate_compensation(delay_hours, distance_km, ...)`
+**Purpose:** Manual EU261 compensation calculation
+
+**What it does:**
+```python
+Input:  delay_hours=5, distance_km=2000, cancellation=False
+Output: Eligibility decision + compensation amount
+```
+
+**Location:** `eu261_rules.py`
+
+**EU261 Rules Implemented:**
+- Short flights (<1500km): €250 for 3+ hour delays
+- Medium flights (1500-3500km): €400 for 3+ hour delays
+- Long flights (>3500km): €600 for 4+ hour delays (€300 for 3-4h)
+- Cancellation rules (based on advance notice)
+- Denied boarding compensation
+- Extraordinary circumstances handling
+
+---
+
+#### Tool #3: `get_eu261_info(query)`
+**Purpose:** Answer questions about EU261 regulations
+
+**What it does:**
+```python
+Input:  query="What are the delay thresholds?"
+Output: Detailed information about EU261 rules
+```
+
+**Topics Covered:**
+- Delay thresholds
+- Compensation amounts
+- Eligibility criteria
+- Cancellation rights
+- Extraordinary circumstances
+
+---
+
+## 🚀 Deployment Architecture
+
+### Cloud Run Services
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Cloud Run (Serverless)                      │
+├─────────────────────────────────────────────────────────────────┤
+│  claimjet-memory-bank (Latest - Recommended)                    │
+│  • ADK + Memory Bank + Model Armor                              │
+│  • URL: https://claimjet-memory-bank-...-run.app                │
+│  • Image: gcr.io/.../claimjet-memory-bank:v2                    │
+│  • Memory: 2Gi, CPU: 2, Timeout: 300s                           │
+├─────────────────────────────────────────────────────────────────┤
+│  claimjet-adk-v2                                                │
+│  • ADK (cleaned version)                                        │
+│  • URL: https://claimjet-adk-v2-...-run.app                     │
+├─────────────────────────────────────────────────────────────────┤
+│  claimjet-adk-chatbot                                           │
+│  • ADK (previous version)                                       │
+│  • URL: https://claimjet-adk-chatbot-...-run.app                │
+├─────────────────────────────────────────────────────────────────┤
+│  claimjet-chatbot                                               │
+│  • Original version                                             │
+│  • URL: https://claimjet-chatbot-...-run.app                    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Infrastructure Components
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Google Cloud Project                        │
+│              qwiklabs-asl-03-7e6910d4e317                       │
+├─────────────────────────────────────────────────────────────────┤
+│  ✅ Cloud Run (us-central1)                                     │
+│  ✅ Firestore (Native Mode, us-central1)                        │
+│  ✅ Secret Manager (GEMINI_API_KEY)                             │
+│  ✅ Container Registry (GCR)                                    │
+│  ✅ Model Armor (Content Safety)                                │
+│  ✅ IAM Service Account: ai-agent-sa@...                        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 📁 Project Structure
 
 ```
 ClaimJet/
-├── .venv/                     # Virtual environment
-├── ai-agent-key.json         # Service account credentials
-├── eu261_rules.py            # EU261 regulation rules engine
-├── klm_claim_agent.py        # Main agent implementation
-├── test_agent.py             # Test suite for rules engine
-├── demo_agent.py             # Demo script with example scenarios
-├── requirements.txt          # Python dependencies
-├── start.sh                  # Quick start script
-└── README.md                 # This file
+├── Core Application
+│   ├── chatbot_adk.py          # Gradio UI + Session Management
+│   ├── adk_agent.py            # ADK Agent + Memory Bank Integration
+│   ├── memory_bank.py          # Firestore Conversation Storage
+│   ├── flight_verifier.py      # Flight Data Verification
+│   └── eu261_rules.py          # EU261 Rules Engine
+│
+├── Configuration
+│   ├── requirements.txt        # Python Dependencies
+│   ├── Dockerfile              # Container Build Instructions
+│   ├── .env                    # Environment Variables (local only)
+│   └── .env.example            # Environment Variables Template
+│
+├── Documentation
+│   └── README.md               # Complete Project Documentation
+│
+└── tests/
+    └── test_memory_bank.py     # Memory Bank Integration Tests
 ```
 
-## Setup
+---
+
+## 🛠️ Technology Stack
+
+| Component | Technology | Purpose |
+|-----------|-----------|---------|
+| **LLM** | Gemini 2.5 Flash | Natural language understanding & generation |
+| **Agent Framework** | Google ADK | Function calling & tool orchestration |
+| **Memory Storage** | Google Cloud Firestore | Conversation persistence |
+| **Content Safety** | Google Model Armor | Input/output validation & filtering |
+| **UI Framework** | Gradio 6.0 | Web-based chat interface |
+| **Container** | Docker + Cloud Run | Serverless deployment |
+| **Authentication** | Google Secret Manager | API key management |
+| **Monitoring** | Cloud Logging | Error tracking & debugging |
+
+---
+
+## 🚦 Quick Start
 
 ### Prerequisites
+- Google Cloud Project with billing enabled
+- Gemini API key from [AI Studio](https://aistudio.google.com/apikey)
+- Python 3.11+ and Docker installed
 
-- Python 3.11+
-- Google Cloud Project with Vertex AI API enabled (optional for rule-based chatbot)
-- Service account with necessary permissions (optional for AI features)
-
-### Installation
-
-1. **Clone the repository:**
-   ```bash
-   git clone <your-repo-url>
-   cd ClaimJet
-   ```
-
-2. **Create virtual environment:**
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   ```
-
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Set up Google Cloud authentication (optional):**
-   
-   If you want to use the AI-powered agent:
-   - Copy `ai-agent-key.json.example` to `ai-agent-key.json`
-   - Replace with your actual Google Cloud service account credentials
-   - **NEVER commit `ai-agent-key.json` to git!**
-   
-   The rule-based chatbot works without Google Cloud credentials.
-
-## Usage
-
-### 🌐 Web Chatbot (Recommended)
-
-Run the chatbot with a beautiful web interface:
-
+### 1. Clone Repository
 ```bash
-# Easy way
-./run_chatbot.sh
+git clone <repository-url>
+cd ClaimJet
+```
 
-# Or manually
+### 2. Set Up Environment
+```bash
+# Create virtual environment
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Configure environment variables
+cp .env.example .env
+# Edit .env and add your GEMINI_API_KEY
+```
+
+### 3. Enable Google Cloud Services
+```bash
+export PROJECT_ID="your-project-id"
+
+# Enable required APIs
+gcloud services enable firestore.googleapis.com --project=$PROJECT_ID
+gcloud services enable run.googleapis.com --project=$PROJECT_ID
+gcloud services enable secretmanager.googleapis.com --project=$PROJECT_ID
+
+# Create Firestore database
+gcloud firestore databases create --location=us-central1 --project=$PROJECT_ID
+```
+
+### 4. Run Locally
+```bash
+# Export Gemini API key
+export GEMINI_API_KEY="your-api-key"
+
+# Set Google Cloud credentials (for Firestore)
+export GOOGLE_APPLICATION_CREDENTIALS="path/to/service-account-key.json"
+export GCP_PROJECT="your-project-id"
+
+# Start the chatbot
+python chatbot_adk.py
+```
+
+Open browser: http://localhost:7860
+
+### 5. Deploy to Cloud Run
+```bash
+# Build and deploy
+gcloud builds submit --tag gcr.io/$PROJECT_ID/claimjet-memory-bank:v1
+
+gcloud run deploy claimjet-memory-bank \
+  --image gcr.io/$PROJECT_ID/claimjet-memory-bank:v1 \
+  --region us-central1 \
+  --platform managed \
+  --allow-unauthenticated \
+  --memory 2Gi \
+  --cpu 2 \
+  --timeout 300 \
+  --set-secrets GEMINI_API_KEY=gemini-api-key:latest \
+  --project=$PROJECT_ID
+```
+
+---
+
+## 🧪 Test Flights
+
+ClaimJet includes mock flight data for testing:
+
+| Flight | Route | Delay | Distance | Compensation |
+|--------|-------|-------|----------|--------------|
+| **TEST001** | AMS → JFK | 6h 45m | 5,850 km | €600 ✅ |
+| **TEST002** | AMS → BCN | 4h 15m | 1,240 km | €250 ✅ |
+
+**Try it:**
+```
+User: "Check flight TEST001"
+Bot: ✅ ELIGIBLE FOR COMPENSATION
+
+Flight: TEST001 (KL) - AMS → JFK
+Status: Delayed 6h 45m
+Distance: 5,850 km
+Compensation: €600 per passenger
+
+The flight qualifies for EU261 compensation.
+```
+
+---
+
+## 🎯 User Experience Flow
+
+### Example Conversation
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ User:  "Check flight TEST001"                                    │
+├─────────────────────────────────────────────────────────────────┤
+│ Bot:   ✅ ELIGIBLE FOR COMPENSATION                             │
+│                                                                  │
+│        Flight: TEST001 (KL) - AMS → JFK                         │
+│        Status: Delayed 6h 45m                                    │
+│        Distance: 5,850 km                                        │
+│        Compensation: €600 per passenger                          │
+│                                                                  │
+│        The flight qualifies for EU261 compensation.             │
+└─────────────────────────────────────────────────────────────────┘
+        ↓ (Memory Bank stores this exchange)
+┌─────────────────────────────────────────────────────────────────┐
+│ User:  "How do I file a claim?"                                  │
+├─────────────────────────────────────────────────────────────────┤
+│ Bot:   Based on your TEST001 flight with €600 compensation,     │
+│        here's how to file your claim:                            │
+│                                                                  │
+│        1. Contact KLM customer service                           │
+│        2. Reference EU261 regulation                             │
+│        3. Provide flight details (TEST001, date, booking)        │
+│        4. Expect response within 6 weeks                         │
+│                                                                  │
+│        💡 Notice how I remembered your previous flight!          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key Feature:** The bot remembers "TEST001" from the previous message thanks to Memory Bank!
+
+---
+
+## 🔒 Security & Compliance
+
+### Data Protection
+- ✅ **Model Armor** filters sensitive data (PII detection)
+- ✅ **Firestore security rules** restrict access
+- ✅ **Secret Manager** for API key storage
+- ✅ **IAM service accounts** with least privilege
+
+### Content Safety
+- ✅ **Input validation** blocks prompt injections
+- ✅ **Output filtering** ensures appropriate responses
+- ✅ **Rate limiting** prevents abuse
+- ✅ **Audit logging** tracks all requests
+
+### Privacy
+- ✅ **Anonymous sessions** by default (no user tracking)
+- ✅ **Automatic cleanup** (sessions deleted after 7 days)
+- ✅ **GDPR compliant** (data deletion on request)
+- ✅ **No PII storage** in conversation logs
+
+---
+
+## 📊 Monitoring & Observability
+
+### Cloud Logging
+```bash
+# View all logs
+gcloud logging read "resource.type=cloud_run_revision" --limit 50
+
+# Filter Memory Bank logs
+gcloud logging read "textPayload=~'Memory Bank'" --limit 20
+
+# Monitor errors
+gcloud logging read "severity>=ERROR" --limit 10
+```
+
+### Firestore Metrics
+- View in Cloud Console: [Firestore Dashboard](https://console.cloud.google.com/firestore)
+- Track: Read/write operations, storage usage, active sessions
+
+### Cloud Run Metrics
+- View in Cloud Console: [Cloud Run Dashboard](https://console.cloud.google.com/run)
+- Track: Request count, latency, CPU/memory usage, error rate
+
+---
+
+## 💰 Cost Estimation
+
+### Per 10,000 Conversations
+
+| Service | Usage | Cost |
+|---------|-------|------|
+| **Gemini 2.5 Flash** | 20K input tokens, 5K output | ~$0.20 |
+| **Firestore** | 30K writes, 10K reads | ~$0.06 |
+| **Cloud Run** | 10K requests (2Gi, 2 CPU) | ~$0.50 |
+| **Secret Manager** | 10K accesses | ~$0.03 |
+| **Model Armor** | 20K validations | ~$0.10 |
+| **Total** | | **~$0.89** |
+
+**Free Tier Includes:**
+- Firestore: 50K reads/day, 20K writes/day
+- Cloud Run: 2M requests/month
+- Secret Manager: 10K accesses/month
+
+**Most workloads fit within free tier!**
+
+---
+
+## 🐛 Troubleshooting
+
+### Memory Bank Not Working
+```bash
+# Check Firestore API enabled
+gcloud services list --enabled | grep firestore
+
+# Verify IAM permissions
+gcloud projects get-iam-policy $PROJECT_ID \
+  --flatten="bindings[].members" \
+  --filter="bindings.members:serviceAccount:ai-agent-sa@*"
+
+# Test locally
+python tests/test_memory_bank.py
+```
+
+### Gemini API Errors
+```bash
+# Check API key is set
+echo $GEMINI_API_KEY
+
+# Verify Secret Manager access
+gcloud secrets versions access latest --secret=gemini-api-key
+```
+
+### Deployment Issues
+```bash
+# Check Cloud Run logs
+gcloud run services logs read claimjet-memory-bank --limit 50
+
+# Describe service
+gcloud run services describe claimjet-memory-bank --region us-central1
+```
+
+---
+
+## 🔄 Development Workflow
+
+### Local Development
+```bash
+# 1. Activate virtual environment
 source .venv/bin/activate
-python chatbot.py
+
+# 2. Set environment variables
+export GEMINI_API_KEY="your-key"
+export GOOGLE_APPLICATION_CREDENTIALS="path/to/key.json"
+export GCP_PROJECT="your-project-id"
+
+# 3. Run chatbot
+python chatbot_adk.py
+
+# 4. Test changes
+python tests/test_memory_bank.py
 ```
 
-Then open your browser to: **http://localhost:7860**
-
-### Quick Start Scripts
-
-Use the provided start script:
-
+### Build & Deploy
 ```bash
-# Run tests
-./start.sh test
+# 1. Build Docker image
+docker build -t gcr.io/$PROJECT_ID/claimjet-memory-bank:latest .
 
-# Run demo scenarios
-./start.sh demo
+# 2. Test locally
+docker run -p 8080:8080 \
+  -e GEMINI_API_KEY="$GEMINI_API_KEY" \
+  gcr.io/$PROJECT_ID/claimjet-memory-bank:latest
 
-# Interactive mode (command line)
-./start.sh interactive
+# 3. Push to GCR
+docker push gcr.io/$PROJECT_ID/claimjet-memory-bank:latest
+
+# 4. Deploy to Cloud Run
+gcloud run deploy claimjet-memory-bank \
+  --image gcr.io/$PROJECT_ID/claimjet-memory-bank:latest \
+  --region us-central1
 ```
 
-### Command Line Mode
+---
 
-Run the agent in command line mode:
+## 🤝 Contributing
 
+### Code Style
+- Follow PEP 8 for Python code
+- Use type hints for function parameters
+- Add docstrings for all functions
+- Keep functions focused and testable
+
+### Testing
 ```bash
-source .venv/bin/activate
-python klm_claim_agent.py
+# Run Memory Bank tests
+python tests/test_memory_bank.py
+
+# Test ADK agent
+python adk_agent.py
+
+# Test UI locally
+python chatbot_adk.py
 ```
 
-Example conversation:
-```
-Agent: Hello! I'm your KLM compensation assistant. How can I help you today?
+---
 
-You: My flight KL1234 was delayed by 5 hours
-Agent: I'm sorry to hear about your delay. To help determine your eligibility...
+## 📝 License
 
-You: It was from Amsterdam to Barcelona, about 1200 km
-Agent: [Agent calculates and provides compensation details]
-```
+[Add your license here]
 
-### Demo Mode
+---
 
-Run predefined scenarios:
+## 🎯 Roadmap
 
-```bash
-source .venv/bin/activate
-python demo_agent.py
-```
+### Completed ✅
+- [x] ADK integration with function calling
+- [x] Memory Bank with Firestore persistence
+- [x] Model Armor content safety
+- [x] Cloud Run deployment
+- [x] Test flight data
+- [x] EU261 compensation calculator
 
-### Test Mode
-
-Test the EU261 rules engine:
-
-```bash
-source .venv/bin/activate
-python test_agent.py
-```
-
-## EU261 Rules Summary
-
-### Compensation Amounts
-
-| Distance | Compensation |
-|----------|-------------|
-| < 1,500 km | €250 |
-| 1,500 - 3,500 km | €400 |
-| > 3,500 km | €600 |
-
-### Eligibility Criteria
-
-✅ **Eligible for compensation:**
-- Delay ≥ 3 hours (short/medium flights)
-- Delay ≥ 4 hours (long flights)
-- Flight cancelled with < 14 days notice
-- Denied boarding (overbooking)
-
-❌ **Not eligible:**
-- Extraordinary circumstances (severe weather, ATC strikes, etc.)
-- Delay below threshold
-- Cancellation with adequate notice (14+ days)
-
-### Care & Assistance Rights
-
-Passengers are entitled to:
-- **Meals & refreshments**: After 2-4 hours (depending on distance)
-- **Hotel accommodation**: If delay extends to next day (5+ hours)
-- **Transportation**: To and from hotel
-- **Communication**: Two phone calls or emails
-- **Reimbursement**: Right to refund if delay ≥ 5 hours
-
-## Technical Details
-
-### Architecture
-
-```
-┌─────────────────┐
-│   User Input    │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────────────────┐
-│  KLM Claim Agent            │
-│  (Gemini 1.5 Pro)          │
-│                             │
-│  - Natural conversation     │
-│  - Context understanding    │
-│  - Tool calling            │
-└────────┬───────────────────┘
-         │
-         ▼
-┌─────────────────────────────┐
-│  Function Tools             │
-├─────────────────────────────┤
-│  1. calculate_compensation  │
-│  2. get_care_rights        │
-└────────┬───────────────────┘
-         │
-         ▼
-┌─────────────────────────────┐
-│  EU261 Rules Engine         │
-│                             │
-│  - Eligibility check        │
-│  - Compensation calculation │
-│  - Rights determination     │
-└─────────────────────────────┘
-```
-
-### Key Components
-
-1. **EU261Rules Class** (`eu261_rules.py`)
-   - Pure Python implementation of EU261 regulations
-   - No external API dependencies
-   - Comprehensive rule coverage
-
-2. **KLMClaimAgent Class** (`klm_claim_agent.py`)
-   - Vertex AI Gemini model integration
-   - Function calling for structured data
-   - Conversational interface
-
-3. **Function Tools**
-   - `calculate_compensation`: Determines eligibility and amount
-   - `get_care_and_assistance_rights`: Provides passenger rights info
-
-## Configuration
-
-### Google Cloud Settings
-
-- **Project ID**: `qwiklabs-asl-03-7e6910d4e317`
-- **Location**: `us-central1`
-- **Model**: `gemini-1.5-pro`
-
-### Environment Variables
-
-```bash
-export GOOGLE_APPLICATION_CREDENTIALS="/path/to/ai-agent-key.json"
-```
-
-## Example Scenarios
-
-### Scenario 1: Eligible Delay
-```
-Flight: KL1234 (AMS → BCN)
-Distance: 1,200 km
-Delay: 4 hours
-Result: €250 compensation
-```
-
-### Scenario 2: Extraordinary Circumstances
-```
-Flight: KL897 (AMS → LHR)
-Distance: 350 km
-Delay: 5 hours
-Reason: Severe weather
-Result: No compensation (extraordinary circumstances)
-```
-
-### Scenario 3: Flight Cancellation
-```
-Flight: KL643 (AMS → JFK)
-Distance: 5,900 km
-Notice: 3 days before departure
-Passengers: 2
-Result: €1,200 total (€600 × 2)
-```
-
-## Limitations
-
-- Requires active internet connection for Vertex AI API
-- Limited to KLM flights (can be extended to other EU carriers)
-- Does not file actual claims (provides eligibility information only)
-- Claim time limits vary by country (typically 3 years)
-
-## Future Enhancements
-
-- [ ] Integration with KLM flight database for real-time data
-- [ ] Automated claim form generation
+### Planned 🚧
+- [ ] User authentication (Google Sign-In)
+- [ ] Real flight API integration
+- [ ] PDF report generation
+- [ ] Email notifications
 - [ ] Multi-language support
-- [ ] Mobile app interface
-- [ ] Email notification system
-- [ ] Integration with payment systems
+- [ ] Analytics dashboard
+- [ ] Conversation export
 
-## Support
+---
 
-For issues or questions about:
-- **EU261 regulations**: Contact your local aviation authority
-- **KLM claims**: Visit klm.com or contact customer service
-- **This agent**: Check the code or consult Google Cloud documentation
+## 📞 Support
 
-## License
+**Project Information:**
+- **Project ID:** qwiklabs-asl-03-7e6910d4e317
+- **Region:** us-central1
+- **Service Account:** ai-agent-sa@qwiklabs-asl-03-7e6910d4e317.iam.gserviceaccount.com
 
-This is a demonstration project built for educational purposes as part of a Google Cloud Qwiklabs exercise.
+**Live Services:**
+- **Production:** https://claimjet-memory-bank-118562953748.us-central1.run.app
 
-## Acknowledgments
+**For Issues:**
+1. Check logs: `gcloud logging read "resource.type=cloud_run_revision"`
+2. Review documentation in this README
+3. Test locally first before deploying
 
-- EU Regulation 261/2004 for passenger rights framework
-- Google Cloud Vertex AI for AI capabilities
-- KLM Royal Dutch Airlines for inspiration
+---
+
+## 🎉 Acknowledgments
+
+Built with:
+- **Google Gemini 2.5 Flash** - Advanced LLM
+- **Google ADK** - Agent Development Kit
+- **Google Cloud Firestore** - NoSQL database
+- **Google Model Armor** - Content safety
+- **Gradio** - Web UI framework
+
+---
+
+**Status:** ✅ Production Ready  
+**Last Updated:** March 17, 2026  
+**Version:** 2.0.0 (Memory Bank Enabled)
