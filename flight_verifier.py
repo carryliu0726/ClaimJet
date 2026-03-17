@@ -18,6 +18,46 @@ class FlightVerifier:
     API_BASE_URL = "https://prod.api.market/api/v1/aedbx/aerodatabox/flights"
     DEFAULT_API_KEY = "cmmtn2ach000djm04lbnkeege"
 
+    # Mock test flights for EU261 demonstration
+    MOCK_FLIGHTS = {
+        "TEST001": {
+            "success": True,
+            "flight_number": "KL TEST001",
+            "airline": "KLM (Test Flight)",
+            "departure_airport": "AMS",
+            "departure_city": "Amsterdam Schiphol",
+            "arrival_airport": "JFK",
+            "arrival_city": "New York JFK",
+            "scheduled_arrival": "2026-03-10 18:30-05:00",
+            "actual_arrival": "2026-03-11 01:15-05:00",
+            "flight_status": "Landed - Delayed",
+            "delay_hours": 6.75,
+            "delay_minutes": 405,
+            "distance_km": 5860,
+            "flight_date": "2026-03-10",
+            "is_mock": True,
+            "mock_scenario": "Long-haul flight delayed over 6 hours (March 10, 2026)",
+        },
+        "TEST002": {
+            "success": True,
+            "flight_number": "KL TEST002",
+            "airline": "KLM (Test Flight)",
+            "departure_airport": "AMS",
+            "departure_city": "Amsterdam Schiphol",
+            "arrival_airport": "BCN",
+            "arrival_city": "Barcelona El Prat",
+            "scheduled_arrival": "2026-03-12 14:30+01:00",
+            "actual_arrival": "2026-03-12 18:45+01:00",
+            "flight_status": "Landed - Delayed",
+            "delay_hours": 4.25,
+            "delay_minutes": 255,
+            "distance_km": 1250,
+            "flight_date": "2026-03-12",
+            "is_mock": True,
+            "mock_scenario": "Medium distance flight delayed 4+ hours (March 12, 2026)",
+        },
+    }
+
     def __init__(self, api_key: Optional[str] = None):
         """
         Initialize FlightVerifier with API key
@@ -46,64 +86,24 @@ class FlightVerifier:
             # Clean up flight number (remove spaces)
             flight_number_clean = flight_number.replace(" ", "").upper()
 
+            # Check if this is a mock test flight
+            if flight_number_clean in self.MOCK_FLIGHTS:
+                result = self.MOCK_FLIGHTS[flight_number_clean].copy()
+                # Calculate EU261 eligibility for mock flight
+                result.update(self._calculate_eu261_decision(result))
+                return result
+
             # If no date provided, use today's date
             if not flight_date:
                 flight_date = datetime.now().strftime("%Y-%m-%d")
+                search_for_latest = True
+            else:
+                search_for_latest = False
 
-            # Build API URL
-            # Format: /flights/{searchBy}/{searchParam}/{dateLocal}
-            url = f"{self.API_BASE_URL}/Number/{flight_number_clean}/{flight_date}"
-
-            # Set headers with API key
-            headers = {"x-api-market-key": self.api_key}
-
-            # Call AeroDataBox API
-            response = requests.get(url, headers=headers, timeout=10)
-
-            # Check for API errors
-            if response.status_code == 401:
-                return {
-                    "success": False,
-                    "error": "API authentication failed. Please check your API key.",
-                    "error_type": "api_auth_error",
-                }
-
-            if response.status_code == 403:
-                return {
-                    "success": False,
-                    "error": "API access denied. Your plan may not support this feature.",
-                    "error_type": "api_forbidden",
-                }
-
-            if response.status_code == 404:
-                return {
-                    "success": False,
-                    "error": f"No flight data found for {flight_number} on {flight_date}.\n\n💡 This could mean:\n"
-                    + "• Flight number doesn't exist or is incorrect\n"
-                    + "• Flight doesn't operate on this date\n"
-                    + "• Try a different date, or use manual entry mode",
-                    "error_type": "not_found",
-                }
-
-            response.raise_for_status()
-            flights_data = response.json()
-
-            # Check if flights data is a list and has results
-            if not isinstance(flights_data, list) or len(flights_data) == 0:
-                return {
-                    "success": False,
-                    "error": f"No flight data found for {flight_number} on {flight_date}.\n\n💡 Try using manual entry mode instead.",
-                    "error_type": "not_found",
-                }
-
-            # Use the first flight (most relevant)
-            flight = flights_data[0]
-
-            # Extract flight information
-            result = self._extract_flight_info(flight, flight_date)
-
-            # Calculate EU261 eligibility
-            result.update(self._calculate_eu261_decision(result))
+            # Try to get flight data, searching backwards if needed
+            result = self._fetch_flight_data(
+                flight_number_clean, flight_date, search_for_latest
+            )
 
             return result
 
@@ -119,6 +119,122 @@ class FlightVerifier:
                 "error": f"Unexpected error: {str(e)}",
                 "error_type": "unknown_error",
             }
+
+    def _fetch_flight_data(
+        self, flight_number: str, flight_date: str, search_for_latest: bool = False
+    ) -> Dict:
+        """
+        Fetch flight data from API, searching backwards if no data found
+
+        Args:
+            flight_number: Clean flight number (e.g., "KL1234")
+            flight_date: Flight date in YYYY-MM-DD format
+            search_for_latest: If True, search backwards for latest available data
+
+        Returns:
+            Dictionary containing flight info and EU261 decision
+        """
+        headers = {"x-api-market-key": self.api_key}
+        original_date = flight_date
+
+        # Try up to 14 days backwards if search_for_latest is True
+        max_attempts = 14 if search_for_latest else 1
+
+        for days_back in range(max_attempts):
+            current_date = (
+                datetime.strptime(flight_date, "%Y-%m-%d") - timedelta(days=days_back)
+            ).strftime("%Y-%m-%d")
+
+            # Build API URL
+            url = f"{self.API_BASE_URL}/Number/{flight_number}/{current_date}"
+
+            # Call AeroDataBox API
+            response = requests.get(url, headers=headers, timeout=10)
+
+            # Check for API errors that should stop the search
+            if response.status_code == 401:
+                return {
+                    "success": False,
+                    "error": "API authentication failed. Please check your API key.",
+                    "error_type": "api_auth_error",
+                }
+
+            if response.status_code == 403:
+                return {
+                    "success": False,
+                    "error": "API access denied. Your plan may not support this feature.",
+                    "error_type": "api_forbidden",
+                }
+
+            # Handle 404 or 204 - no data for this date, continue searching if enabled
+            if (
+                response.status_code == 404
+                or response.status_code == 204
+                or len(response.content) == 0
+            ):
+                if search_for_latest and days_back < max_attempts - 1:
+                    # Continue searching backwards
+                    continue
+                else:
+                    # No more attempts or not searching - return error
+                    return {
+                        "success": False,
+                        "error": f"No flight data found for {flight_number} on {original_date}.\n\n💡 This could mean:\n"
+                        + "• Flight number doesn't exist or is incorrect\n"
+                        + "• Flight doesn't operate on this date\n"
+                        + "• Try a different date, or use manual entry mode",
+                        "error_type": "not_found",
+                    }
+
+            # Try to parse JSON response
+            try:
+                response.raise_for_status()
+                flights_data = response.json()
+            except ValueError as e:
+                # JSON parsing error - likely empty response
+                if search_for_latest and days_back < max_attempts - 1:
+                    continue
+                else:
+                    return {
+                        "success": False,
+                        "error": f"No flight data found for {flight_number} on {original_date}.\n\n💡 Try using manual entry mode instead.",
+                        "error_type": "not_found",
+                    }
+
+            # Check if flights data is a list and has results
+            if not isinstance(flights_data, list) or len(flights_data) == 0:
+                if search_for_latest and days_back < max_attempts - 1:
+                    continue
+                else:
+                    return {
+                        "success": False,
+                        "error": f"No flight data found for {flight_number} on {original_date}.\n\n💡 Try using manual entry mode instead.",
+                        "error_type": "not_found",
+                    }
+
+            # Found valid flight data!
+            flight = flights_data[0]
+
+            # Extract flight information
+            result = self._extract_flight_info(flight, current_date)
+
+            # Add note if we used a different date
+            if current_date != original_date:
+                result["date_note"] = (
+                    f"Using data from {current_date} (latest available)"
+                )
+
+            # Calculate EU261 eligibility
+            result.update(self._calculate_eu261_decision(result))
+
+            return result
+
+        # If we get here, we've exhausted all attempts
+        return {
+            "success": False,
+            "error": f"No flight data found for {flight_number} in the past {max_attempts} days.\n\n💡 Try using manual entry mode instead.",
+            "error_type": "not_found",
+        }
 
     def _extract_flight_info(self, flight: Dict, flight_date: str) -> Dict:
         """
@@ -296,10 +412,38 @@ class FlightVerifier:
         else:
             delay_display = "On time"
 
-        message = f"""
-✈️ **Flight Verification Result**
+        # Add date note if present
+        date_note = ""
+        if result.get("date_note"):
+            date_note = f"\n💡 **Note:** {result['date_note']}"
 
-**Flight Details:**
+        # Add mock flight indicator
+        mock_note = ""
+        if result.get("is_mock"):
+            mock_note = f"\n\n🧪 **TEST SCENARIO:** {result.get('mock_scenario', 'Demonstration flight')}"
+
+        # Build eligibility decision first
+        if result.get("eu261_eligible"):
+            decision_header = f"""
+✅ **ELIGIBLE FOR COMPENSATION**
+
+**Amount:** €{result["compensation_amount"]} per passenger
+**Reason:** {result["compensation_reason"]}
+**Distance Category:** {result["distance_category"]}{mock_note}
+"""
+        else:
+            decision_header = f"""
+❌ **NOT ELIGIBLE FOR COMPENSATION**
+
+**Reason:** {result["compensation_reason"]}{mock_note}
+"""
+
+        # Build full message with eligibility first
+        message = f"""
+{decision_header}
+---
+
+✈️ **Flight Details:**
 - Flight: {result["flight_number"]} ({result["airline"]})
 - Route: {result["departure_city"]} ({result["departure_airport"]}) → {result["arrival_city"]} ({result["arrival_airport"]})
 - Date: {result["flight_date"]}
@@ -309,20 +453,13 @@ class FlightVerifier:
 **Timing:**
 - Scheduled Arrival: {result.get("scheduled_arrival", "N/A")}
 - Actual/Predicted Arrival: {result.get("actual_arrival", "N/A")}
-- Delay: {delay_display}
-
----
-
-**EU261 Compensation Decision:**
+- Delay: {delay_display}{date_note}
 """
 
+        # Add next steps only if eligible
         if result.get("eu261_eligible"):
             message += f"""
-✅ **ELIGIBLE FOR COMPENSATION**
-
-**Amount:** €{result["compensation_amount"]} per passenger
-**Reason:** {result["compensation_reason"]}
-**Distance Category:** {result["distance_category"]}
+---
 
 **Next Steps:**
 1. File a claim with the airline
@@ -330,12 +467,9 @@ class FlightVerifier:
 3. You have up to 3 years to claim (varies by country)
 """
         else:
-            message += f"""
-❌ **NOT ELIGIBLE FOR COMPENSATION**
+            message += """
 
-**Reason:** {result["compensation_reason"]}
-
-However, you may still have rights to care and assistance if the delay was significant.
+💡 However, you may still have rights to care and assistance if the delay was significant.
 """
 
         return message

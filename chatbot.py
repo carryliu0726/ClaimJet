@@ -25,8 +25,13 @@ class SimpleClaimChatbot:
         return float(numbers[0]) if numbers else None
 
     def extract_flight_number(self, text):
-        """Extract flight number from text (e.g., KL1234, BA456, or just 0895)"""
+        """Extract flight number from text (e.g., KL1234, BA456, TEST001, or just 0895)"""
         text_upper = text.upper()
+
+        # Pattern 0: Test flights (e.g., TEST001, TEST002)
+        match = re.search(r"\b(TEST\d{3})\b", text_upper)
+        if match:
+            return match.group(1)
 
         # Pattern 1: Full format with airline code (e.g., KL1234, BA456)
         match = re.search(r"\b([A-Z]{2})\s*(\d{3,4})\b", text_upper)
@@ -339,7 +344,8 @@ demo = gr.ChatInterface(
     """,
     examples=[
         "Check flight KL1234",
-        "Verify flight BA456",
+        "Check flight TEST001",
+        "Check flight TEST002",
         "My flight from Amsterdam to Barcelona was delayed 5 hours",
         "Flight was cancelled with 3 days notice, distance was 5900 km",
         "I was denied boarding due to overbooking on a 1200 km flight",
@@ -347,12 +353,17 @@ demo = gr.ChatInterface(
 )
 
 if __name__ == "__main__":
+    import os
+
     print("=" * 60)
     print("KLM Flight Compensation Chatbot (Rule-Based)")
     print("=" * 60)
     print("\n✅ No AI model required - uses EU261 rules directly!")
     print("🚀 Starting chatbot...")
-    print("\n🌐 Open your browser at: http://localhost:7860")
+
+    # Allow port to be configured via environment variable or find available port
+    port = int(os.environ.get("GRADIO_SERVER_PORT", 7860))
+    print(f"\n🌐 Open your browser at: http://localhost:{port}")
     print("\n⚠️  Press Ctrl+C to stop the server\n")
 
-    demo.launch(server_name="127.0.0.1", server_port=7860, share=False, show_error=True)
+    demo.launch(server_name="127.0.0.1", server_port=port, share=False, show_error=True)
