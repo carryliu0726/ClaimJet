@@ -10,7 +10,10 @@ from google import genai
 from google.genai import types
 from flight_verifier import FlightVerifier
 from eu261_rules import EU261Rules
+from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
 
 # Initialize the GenAI client
 # Use Gemini API with API key (get from https://aistudio.google.com/apikey)
