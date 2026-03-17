@@ -1,0 +1,55 @@
+:root {
+  --bg-primary: #f8f9fa;
+  --bg-secondary: #fff;
+  --bg-card: #fff;
+  --text-primary: #202124;
+  --text-secondary: #5f6368;
+  --accent: #1a73e8;
+  --accent-hover: #1765cc;
+  --success: #1e8e3e;
+  --warning: #f9ab00;
+  --error: #d93025;
+  --border: #dadce0;
+  --font-sans: 'DM Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --radius: 10px;
+  --shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  border-radius: var(--radius);
+}
+
+input, select, textarea {
+  font-family: inherit;
+}
